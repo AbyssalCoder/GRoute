@@ -1,0 +1,43 @@
+from backend.models.iceberg.physics_model import predict_physics
+from backend.models.iceberg.random_forest_model import load_artifact, predict_daily_motion
+from backend.schemas.iceberg import IcebergRecord, IcebergPrediction
+from datetime import timedelta
+from math import cos, exp, radians, sin
+
+def _environmental_drift(environment: dict | None) -> tuple[float, float]:
+    if not environment:
+        return 0.0, 0.0
+    speed = float(environment.get("current_speed_ms", 0) or 0)
+    direction = radians(float(environment.get("current_direction_deg", 0) or 0))
+    wind_speed = float(environment.get("wind_speed_ms", 0) or 0) * 0.03
+    wind_direction = radians(float(environment.get("wind_direction_deg", 0) or 0))
+    return (speed * cos(direction) + wind_speed * cos(wind_direction)) * 86400 / 1000, (speed * sin(direction) + wind_speed * sin(wind_direction)) * 86400 / 1000
+
+class IcebergPredictor:
+    def __init__(self, ml_available: bool = True) -> None:
+        self.artifact = load_artifact() if ml_available else None
+        self.ml_available = self.artifact is not None
+
+    @property
+    def model_name(self) -> str:
+        return "iceberg_hybrid_v1" if self.ml_available else "physics_baseline_v1"
+
+    def predict(self, record: IcebergRecord, horizon_hours: int = 48, environment: dict | None = None) -> list[IcebergPrediction]:
+        if not self.artifact:
+            return predict_physics(record, hours=horizon_hours)
+        lat, lon = record.latitude, record.longitude
+        timestamp = record.timestamp
+        north_delta = record.velocity_v * 86400 / 1000
+        east_delta = record.velocity_u * 86400 / 1000
+        environmental_north, environmental_east = _environmental_drift(environment)
+        predictions = []
+        for hour in range(1, horizon_hours + 1):
+            if hour % 24 == 1 and hour > 1:
+                north_delta, east_delta = predict_daily_motion(self.artifact["model"], lat, lon, north_delta, east_delta, timestamp, record.speed * 86400 / 1000)
+                north_delta += environmental_north
+                east_delta += environmental_east
+            lat += north_delta / 111.195 / 24
+            lon += east_delta / (111.195 * max(0.1, abs(cos(radians(lat)))) * 24)
+            timestamp += timedelta(hours=1)
+            predictions.append(IcebergPrediction(timestamp=timestamp, latitude=max(-90, min(90, lat)), longitude=((lon + 180) % 360) - 180, uncertainty_km=1.2 + 0.2 * hour, confidence=max(0.4, exp(-hour / 96))))
+        return predictions

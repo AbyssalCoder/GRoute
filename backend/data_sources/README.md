@@ -1,0 +1,1 @@
+External adapters intentionally degrade gracefully. Credentials are loaded from environment or provider configuration only; repository credential files are never read. Before using Copernicus Marine dataset IDs, run the official Toolbox `describe` command and configure the selected IDs in the environment.

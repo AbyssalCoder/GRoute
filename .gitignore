@@ -1,0 +1,12 @@
+.env
+Creds.txt
+__pycache__/
+.pytest_cache/
+*.pyc
+.venv/
+data/raw/
+data/cache/
+data/models/
+data/iceberg_motion_state.json
+frontend/node_modules/
+frontend/.next/

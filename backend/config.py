@@ -19,6 +19,17 @@ class Settings(BaseSettings):
     global_fish_base_url: str = "https://gateway.api.globalfishingwatch.org/v3/4wings/report"
     iceberg_latest_url: str = "https://raw.githubusercontent.com/Joel-hanson/Iceberg-locations/main/api/latest.json"
     iceberg_state_path: Path = ROOT / "data" / "iceberg_motion_state.json"
+    smtp_host: str = ""
+    smtp_port: int = 465
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_use_tls: bool = True
+    alert_sender_address: str = "aniketsupermails2005@gmail.com"
+    alert_receiver_address: str = "deybidisha20@gmail.com"
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = "http://localhost:8000/api/auth/oauth/google/callback"
+    frontend_url: str = "http://127.0.0.1:3000"
     map_style_url: str = "https://tiles.openfreemap.org/styles/liberty"
     grid_resolution_degrees: float = 1.0
     iceberg_forecast_horizon_hours: int = 48

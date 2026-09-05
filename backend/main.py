@@ -1,8 +1,13 @@
 import asyncio
+import secrets
+import smtplib
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from email.message import EmailMessage
+from urllib.parse import urlencode
 import httpx
-from fastapi import FastAPI, HTTPException, Query, WebSocket
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket
+from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from backend.config import get_settings
 from backend.data_sources.ais import AISReplayProvider, DataDockedVesselProvider
@@ -86,6 +91,73 @@ def prediction_geojson(record: IcebergRecord, horizon: int) -> FeatureCollection
 @app.get("/api/health")
 def health():
     return {"status":"ok","demo_mode":settings.demo_mode,"timestamp":datetime.now(timezone.utc).isoformat()}
+
+def _deliver_sos_email(payload: dict) -> dict:
+    if not settings.smtp_host:
+        return {"status": "not_configured", "detail": "SMTP is not configured. Add SMTP_HOST and SMTP credentials to send email alerts."}
+    vessel = payload.get("vessel") or {}
+    nearby = payload.get("nearby_icebergs") or []
+    message = EmailMessage()
+    message["Subject"] = f"GRoute SOS: {vessel.get('name') or vessel.get('id') or 'Tracked vessel'}"
+    message["From"] = settings.alert_sender_address
+    message["To"] = settings.alert_receiver_address
+    message.set_content(
+        "GRoute emergency maritime alert\n\n"
+        f"Description: {payload.get('description') or 'No description provided.'}\n"
+        f"Vessel: {vessel.get('name') or vessel.get('id') or 'Unknown'}\n"
+        f"Position: {vessel.get('latitude')}, {vessel.get('longitude')}\n"
+        f"Nearby icebergs ({len(nearby)}):\n"
+        + "\n".join(f"- {item.get('id', 'Unknown')}: {item.get('latitude')}, {item.get('longitude')}" for item in nearby)
+    )
+    if settings.smtp_port == 465:
+        with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=15) as smtp:
+            if settings.smtp_username:
+                smtp.login(settings.smtp_username, settings.smtp_password)
+            smtp.send_message(message)
+    else:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as smtp:
+            if settings.smtp_use_tls:
+                smtp.starttls()
+            if settings.smtp_username:
+                smtp.login(settings.smtp_username, settings.smtp_password)
+            smtp.send_message(message)
+    return {"status": "sent", "detail": f"Alert sent to {settings.alert_receiver_address}."}
+
+@app.post("/api/alerts/sos")
+async def send_sos_alert(payload: dict):
+    try:
+        return await asyncio.to_thread(_deliver_sos_email, payload)
+    except (OSError, smtplib.SMTPException) as exc:
+        raise HTTPException(status_code=502, detail=f"SOS email delivery failed: {exc}") from exc
+
+@app.get("/api/auth/google")
+def google_auth_start():
+    if not settings.google_client_id:
+        raise HTTPException(status_code=503, detail="Google SSO is not configured.")
+    state = secrets.token_urlsafe(32)
+    query = urlencode({"client_id": settings.google_client_id, "redirect_uri": settings.google_redirect_uri, "response_type": "code", "scope": "openid email profile", "state": state, "access_type": "offline", "prompt": "select_account"})
+    response = RedirectResponse(f"https://accounts.google.com/o/oauth2/v2/auth?{query}")
+    response.set_cookie("groute_oauth_state", state, httponly=True, secure=False, samesite="lax", max_age=600)
+    return response
+
+@app.get("/api/auth/oauth/google/callback")
+@app.get("/api/v1/auth/oauth/google/callback")
+async def google_auth_callback(request: Request, code: str | None = None, state: str | None = None, error: str | None = None):
+    if error:
+        return RedirectResponse(f"{settings.frontend_url}/?sso=error")
+    if not code or not state or state != request.cookies.get("groute_oauth_state"):
+        raise HTTPException(status_code=400, detail="Invalid Google OAuth state.")
+    async with httpx.AsyncClient(timeout=15) as client:
+        token_response = await client.post("https://oauth2.googleapis.com/token", data={"code": code, "client_id": settings.google_client_id, "client_secret": settings.google_client_secret, "redirect_uri": settings.google_redirect_uri, "grant_type": "authorization_code"})
+        token_response.raise_for_status()
+        access_token = token_response.json().get("access_token")
+        if not access_token:
+            raise HTTPException(status_code=502, detail="Google did not return an access token.")
+        profile_response = await client.get("https://openidconnect.googleapis.com/v1/userinfo", headers={"Authorization": f"Bearer {access_token}"})
+        profile_response.raise_for_status()
+    response = RedirectResponse(f"{settings.frontend_url}/?sso=success")
+    response.delete_cookie("groute_oauth_state")
+    return response
 
 @app.get("/api/icebergs")
 def get_icebergs():

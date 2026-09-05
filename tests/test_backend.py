@@ -84,3 +84,8 @@ def test_iceberg_motion_restores_and_advances_from_saved_state(tmp_path):
     assert first[0].latitude > record.latitude
     assert second[0].latitude > first[0].latitude
     assert second[0].timestamp == now + timedelta(hours=1)
+
+def test_sos_alert_reports_missing_smtp_configuration():
+    response = client.post('/api/alerts/sos', json={'vessel': {'name': 'Test Vessel', 'latitude': -60, 'longitude': -30}, 'nearby_icebergs': [], 'description': 'Test alert'})
+    assert response.status_code == 200
+    assert response.json()['status'] == 'not_configured'

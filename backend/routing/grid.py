@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from math import ceil, floor
+from math import ceil, floor, radians, sin
 from backend.routing.risk import haversine_km, sea_ice_risk, weather_risk
 from global_land_mask import globe
 
@@ -22,18 +22,33 @@ class CostGrid:
         self.cols = max(2, int((self.max_lon-self.min_lon)/resolution)+1)
         self.mode = mode
         self.environment = environment or {}
+        self.start = start
+        self.destination = destination
 
     def cell(self, row: int, col: int) -> Cell:
         lat = self.min_lat + row * self.resolution
         lon = self.min_lon + col * self.resolution
         ice_concentration = self.environment.get("sea_ice_concentration")
-        ice = sea_ice_risk(float(ice_concentration)) if ice_concentration is not None else sea_ice_risk(max(0, min(1, 0.28 + (abs(lat)+lon % 17) / 100)))
+        synthetic_ice = 0.2 + 0.42 * ((sin(radians(lat * 3.0 + lon * 2.0)) + 1) / 2)
+        ice = sea_ice_risk(float(ice_concentration)) if ice_concentration is not None else sea_ice_risk(synthetic_ice)
         wave = weather_risk(float(self.environment.get("wave_height_m", 1.2)), float(self.environment.get("wind_speed_ms", 8)))
         current_factor = 1 + min(0.35, float(self.environment.get("current_speed_ms", 0)) / 2)
-        fuel = 1 + max(0, 0.25 - abs(lat + 65) / 100)
-        weights = {"shortest": (1.0, 0.0, 0.0), "fuel": (1.15, 0.35, 0.25), "safest": (1.0, 6.0, 3.0), "balanced": (1.0, 3.0, 1.5)}.get(self.mode, (1.0, 3.0, 1.5))
+        fuel = 1 + max(0, 0.25 - abs(lat + 65) / 100) + max(0, wave - 0.35) * 0.12
+        weights = {
+            "shortest": (1.0, 0.0, 0.0),
+            "fuel": (0.75, 2.5, 1.5),
+            "safest": (1.0, 16.0, 8.0),
+            "balanced": (1.0, 6.0, 3.0),
+        }.get(self.mode, (1.0, 6.0, 3.0))
         step_km = haversine_km(lat, lon, self.min_lat + max(0, row - 1) * self.resolution, self.min_lon + max(0, col - 1) * self.resolution) or 1.0
-        cost = step_km * (weights[0] * fuel * current_factor + weights[1] * ice + weights[2] * wave)
+        longitude_span = self.destination[1] - self.start[1]
+        progress = (lon - self.start[1]) / longitude_span if longitude_span else 0.5
+        progress = max(0.0, min(1.0, progress))
+        baseline_latitude = self.start[0] + progress * (self.destination[0] - self.start[0])
+        preferred_offset = {"fuel": -0.8, "safest": 0.9, "balanced": 0.35}.get(self.mode, 0.0)
+        corridor_deviation = abs(lat - (baseline_latitude + preferred_offset))
+        corridor_weight = {"fuel": 1.8, "safest": 2.4, "balanced": 1.0}.get(self.mode, 0.0)
+        cost = step_km * (weights[0] * fuel * current_factor + weights[1] * ice + weights[2] * wave + corridor_weight * corridor_deviation)
         return Cell(row, col, lat, lon, cost)
 
     def is_land(self, cell: Cell) -> bool:

@@ -1,2 +1,3 @@
 import Dashboard from '../components/Dashboard';
-export default function Page() { return <Dashboard />; }
+import AuthShell from '../components/AuthShell';
+export default function Page() { return <AuthShell><Dashboard /></AuthShell>; }

@@ -24,6 +24,7 @@ def astar(grid: CostGrid, start: tuple[float,float], destination: tuple[float,fl
             if new_score < score.get(key, float('inf')):
                 score[key] = new_score
                 came_from[key] = (row,col)
-                priority = new_score + haversine_km(neighbor.latitude, neighbor.longitude, goal.latitude, goal.longitude)
+                # Risk and weather weights can make distance an inadmissible heuristic.
+                priority = new_score
                 heapq.heappush(queue, (priority, *key))
     return []

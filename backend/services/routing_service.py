@@ -53,7 +53,7 @@ def optimize_route(request: RouteRequest, ship: TrackedShip, iceberg_records: li
                 continue
             routing_environment["iceberg_points"].append((record.latitude, record.longitude))
             routing_environment["iceberg_points"].extend((prediction.latitude, prediction.longitude) for prediction in predictor.predict(record, horizon, environment)[::12])
-    grid=CostGrid(start,end,resolution=0.5,mode=request.mode,environment=routing_environment)
+    grid=CostGrid(start,end,resolution=0.25,mode=request.mode,environment=routing_environment)
     path=astar(grid,start,end)
     if not path:
         raise ValueError("No water-only route exists between the requested coordinates")

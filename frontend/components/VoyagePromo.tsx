@@ -30,5 +30,5 @@ export default function VoyagePromo() {
     return () => window.clearInterval(timer);
   }, []);
 
-  return <aside className="promo-card"><img src={voyageImages[imageIndex].source} alt={voyageImages[imageIndex].alt} /><div><strong>Smarter data<br />for safer voyages.</strong><span>→</span></div></aside>;
+  return <a className="promo-card" href="https://usicecenter.gov/Products/AntarcIcebergs" target="_blank" rel="noreferrer" aria-label="Open Antarctic Iceberg Products"><img src={voyageImages[imageIndex].source} alt={voyageImages[imageIndex].alt} /><div><strong>Smarter data<br />for safer voyages.</strong><span>→</span></div></a>;
 }

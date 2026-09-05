@@ -45,9 +45,9 @@ class CostGrid:
         progress = (lon - self.start[1]) / longitude_span if longitude_span else 0.5
         progress = max(0.0, min(1.0, progress))
         baseline_latitude = self.start[0] + progress * (self.destination[0] - self.start[0])
-        preferred_offset = {"fuel": -0.8, "safest": 0.9, "balanced": 0.35}.get(self.mode, 0.0)
+        preferred_offset = {"fuel": -1.6, "safest": 1.8, "balanced": 0.7}.get(self.mode, 0.0)
         corridor_deviation = abs(lat - (baseline_latitude + preferred_offset))
-        corridor_weight = {"fuel": 1.8, "safest": 2.4, "balanced": 1.0}.get(self.mode, 0.0)
+        corridor_weight = {"fuel": 4.0, "safest": 5.0, "balanced": 2.0}.get(self.mode, 0.0)
         cost = step_km * (weights[0] * fuel * current_factor + weights[1] * ice + weights[2] * wave + corridor_weight * corridor_deviation)
         return Cell(row, col, lat, lon, cost)
 

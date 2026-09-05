@@ -1,4 +1,4 @@
-# Antarctic Maritime AI Decision Support System
+# GRoute
 
 A research and decision-support prototype for Antarctic iceberg movement, sea-ice context, maritime risk, vessel replay, and AI-assisted route recommendations. It is not autonomous navigation and does not guarantee safety.
 

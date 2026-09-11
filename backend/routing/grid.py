@@ -14,10 +14,11 @@ class Cell:
 class CostGrid:
     def __init__(self, start: tuple[float,float], destination: tuple[float,float], resolution: float = 1.0, mode: str = "balanced", environment: dict | None = None) -> None:
         self.resolution = resolution
-        self.min_lat = floor(min(start[0], destination[0]) - 3)
-        self.max_lat = ceil(max(start[0], destination[0]) + 3)
-        self.min_lon = floor(min(start[1], destination[1]) - 3)
-        self.max_lon = ceil(max(start[1], destination[1]) + 3)
+        margin = 8 if environment and environment.get("iceberg_points") else 3
+        self.min_lat = floor(min(start[0], destination[0]) - margin)
+        self.max_lat = ceil(max(start[0], destination[0]) + margin)
+        self.min_lon = floor(min(start[1], destination[1]) - margin)
+        self.max_lon = ceil(max(start[1], destination[1]) + margin)
         self.rows = max(2, int((self.max_lat-self.min_lat)/resolution)+1)
         self.cols = max(2, int((self.max_lon-self.min_lon)/resolution)+1)
         self.mode = mode
@@ -48,7 +49,12 @@ class CostGrid:
         preferred_offset = {"fuel": -1.6, "safest": 1.8, "balanced": 0.7}.get(self.mode, 0.0)
         corridor_deviation = abs(lat - (baseline_latitude + preferred_offset))
         corridor_weight = {"fuel": 4.0, "safest": 5.0, "balanced": 2.0}.get(self.mode, 0.0)
-        cost = step_km * (weights[0] * fuel * current_factor + weights[1] * ice + weights[2] * wave + corridor_weight * corridor_deviation)
+        risk_radius = max(1.0, float(self.environment.get("iceberg_risk_radius_km", 300)))
+        ship_speed = max(0.1, float(self.environment.get("ship_speed_knots", 10)))
+        estimated_hours = haversine_km(self.start[0], self.start[1], lat, lon) / (ship_speed * 1.852)
+        iceberg_risk = max((max(0.0, 1 - haversine_km(lat, lon, point[0], point[1]) / risk_radius) * (1.0 if len(point) < 3 else max(0.0, 1 - abs(estimated_hours - point[2]) / 48)) for point in self.environment.get("iceberg_risk_points", [])), default=0.0)
+        risk_weight = {"shortest": 0.0, "fuel": 3.0, "safest": 14.0, "balanced": 7.0}.get(self.mode, 7.0)
+        cost = step_km * (weights[0] * fuel * current_factor + weights[1] * ice + weights[2] * wave + corridor_weight * corridor_deviation + risk_weight * iceberg_risk)
         return Cell(row, col, lat, lon, cost)
 
     def is_land(self, cell: Cell) -> bool:
@@ -57,7 +63,7 @@ class CostGrid:
     def is_blocked(self, cell: Cell) -> bool:
         if self.is_land(cell):
             return True
-        clearance = float(self.environment.get("iceberg_clearance_km", 50))
+        clearance = float(self.environment.get("iceberg_clearance_km", 300))
         return any(haversine_km(cell.latitude, cell.longitude, point[0], point[1]) <= clearance for point in self.environment.get("iceberg_points", []))
 
     def segment_crosses_land(self, start: Cell, end: Cell) -> bool:

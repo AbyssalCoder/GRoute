@@ -9,6 +9,7 @@ pandas>=2.2,<3
 scikit-learn>=1.5,<2
 joblib>=1.4,<2
 xarray>=2024.6,<2026
+copernicusmarine>=2.2,<3
 global-land-mask>=1.0.0,<2
 pytest>=8.3,<9
 pytest-asyncio>=0.24,<1

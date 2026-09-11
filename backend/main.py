@@ -13,6 +13,7 @@ from backend.config import get_settings
 from backend.data_sources.ais import AISReplayProvider, DataDockedVesselProvider
 from backend.data_sources.aisstream import AISStreamProvider
 from backend.data_sources.global_fishing_watch import GlobalFishingWatchProvider
+from backend.data_sources.copernicus_marine import discover_datasets
 from backend.models.iceberg.predictor import IcebergPredictor
 from backend.models.iceberg.random_forest_model import load_artifact
 from backend.schemas.common import FeatureCollection, GeoJSONFeature, GeoJSONGeometry, Position
@@ -21,7 +22,8 @@ from backend.schemas.marine import ModelStatus
 from backend.schemas.route import RouteRequest, TrackedShip
 from backend.services.demo import demo_icebergs, demo_marine, demo_sea_ice, iceberg_points_geojson, load_latest_icebergs, load_historical_icebergs, sea_ice_geojson
 from backend.services.routing_service import optimize_route
-from backend.services.environment import fetch_route_environment_samples
+from backend.services.environment import fetch_route_environment, fetch_route_environment_samples
+from backend.data_sources.open_meteo import fetch_marine
 from backend.services.iceberg_motion import advance_and_save, restore_and_advance
 
 settings = get_settings()
@@ -51,7 +53,7 @@ async def lifespan(_app: FastAPI):
         icebergs = advance_and_save(icebergs, predictor, settings.iceberg_state_path)
 
 app = FastAPI(title="GRoute", version="0.1.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origin_regex=r"https?://(localhost|127\.0\.0\.1):(3000|3001)$", allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001", "http://127.0.0.1:3001"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 if settings.demo_mode:
     icebergs = demo_icebergs()
@@ -127,6 +129,8 @@ def _deliver_sos_email(payload: dict) -> dict:
 async def send_sos_alert(payload: dict):
     try:
         return await asyncio.to_thread(_deliver_sos_email, payload)
+    except smtplib.SMTPAuthenticationError as exc:
+        raise HTTPException(status_code=502, detail="Gmail rejected the SMTP login. Enable 2-Step Verification and use a 16-character Google App Password as SMTP_PASSWORD.") from exc
     except (OSError, smtplib.SMTPException) as exc:
         raise HTTPException(status_code=502, detail=f"SOS email delivery failed: {exc}") from exc
 
@@ -172,8 +176,9 @@ def get_iceberg(identifier: str):
     return record_for(identifier)
 
 @app.get("/api/icebergs/{identifier}/trajectory")
-def get_trajectory(identifier: str, horizon_hours: int = Query(48, ge=1, le=168)):
-    record=record_for(identifier); predictions=predictor.predict(record,horizon_hours)
+def get_trajectory(identifier: str, horizon_hours: int = Query(7920, ge=1, le=7920)):
+    record=record_for(identifier); all_predictions=predictor.predict(record,horizon_hours); predictions=all_predictions[::6]
+    if all_predictions and predictions[-1] != all_predictions[-1]: predictions.append(all_predictions[-1])
     return IcebergTrajectory(iceberg_id=identifier,model=predictor.model_name,predictions=predictions,geojson=prediction_geojson(record,horizon_hours))
 
 @app.post("/api/predictions/iceberg")
@@ -197,6 +202,28 @@ def get_marine():
     if not settings.demo_mode:
         return {"source":"Open-Meteo adapter available","points":[]}
     return {"source":"DEMO DATA" if settings.demo_mode else "Open-Meteo adapter available","points":[p.model_dump(mode="json") for p in demo_marine()]}
+
+@app.get("/api/ocean-currents")
+async def get_ocean_currents():
+    from math import cos, radians, sin
+    from global_land_mask import globe
+
+    points = [(latitude, longitude) for latitude in (-55, -62) for longitude in (-150, -90, -30, 30, 90, 150)]
+    marine_samples = await asyncio.gather(*(fetch_marine(latitude, longitude) for latitude, longitude in points))
+    features = []
+    for (latitude, longitude), marine in zip(points, marine_samples):
+        current = marine.get("current", {})
+        speed = float(current.get("ocean_current_velocity", 0) or 0)
+        bearing = float(current.get("ocean_current_direction", 0) or 0)
+        length_degrees = 0.7 + min(1.1, speed * 5)
+        end_latitude = latitude + cos(radians(bearing)) * length_degrees
+        end_longitude = longitude + sin(radians(bearing)) * length_degrees / max(0.2, cos(radians(latitude)))
+        if globe.is_land(latitude, longitude) or globe.is_land(end_latitude, end_longitude):
+            continue
+        current_type = "warm" if bearing < 180 else "cold"
+        current_color = "#ef5da8" if current_type == "warm" else "#28a9e8"
+        features.append(GeoJSONFeature(geometry=GeoJSONGeometry(type="LineString", coordinates=[[longitude, latitude], [end_longitude, end_latitude]]), properties={"kind":"ocean-current", "speed_ms":round(speed, 4), "bearing_deg":round(bearing, 1), "current_type":current_type, "color":current_color, "source":"Open-Meteo live marine current", "observed_at":datetime.now(timezone.utc).isoformat()}))
+    return {"source":"Live marine current samples", "features":FeatureCollection(features=features).model_dump(mode="json")}
 
 @app.get("/api/weather")
 def get_weather():
@@ -231,9 +258,11 @@ async def get_vessels():
 async def route(request: RouteRequest):
     global_fish_provider.start_refresh()
     gfw_vessels = global_fish_provider.cached()
-    stream_vessels = await aisstream_provider.get_vessels() if aisstream_provider.configured else None
+    stream_task = asyncio.create_task(aisstream_provider.get_vessels()) if aisstream_provider.configured else None
+    datadocked_task = asyncio.create_task(datadocked_provider.get_vessels()) if datadocked_provider.configured else None
+    stream_vessels = await stream_task if stream_task else None
     try:
-        live_vessels = await datadocked_provider.get_vessels() if datadocked_provider.configured else None
+        live_vessels = await datadocked_task if datadocked_task else None
     except Exception:
         live_vessels = None
     candidates = (stream_vessels.vessels if stream_vessels else []) + (gfw_vessels.vessels if gfw_vessels else []) + (live_vessels.vessels if live_vessels else [])
@@ -241,6 +270,8 @@ async def route(request: RouteRequest):
     if tracked is None and settings.demo_mode:
         replay = ais_provider.get_vessels()
         tracked = next((vessel for vessel in replay.vessels if vessel.vessel_id == request.vessel_id or vessel.mmsi == request.vessel_id), None)
+    if tracked is None and candidates:
+        tracked = candidates[0]
     if tracked is None:
         raise HTTPException(status_code=503, detail="Vessel not found. Configure DATADOCKED_API_KEY and DATADOCKED_AREA_POINTS, or provide a known IMO/MMSI in DATADOCKED_VESSEL_IDS.")
     ship = TrackedShip(vessel_id=tracked.vessel_id, name=tracked.name, latitude=tracked.latitude, longitude=tracked.longitude, destination=tracked.destination)
@@ -251,13 +282,14 @@ async def route(request: RouteRequest):
     except Exception:
         environment = {"source": "Environmental services unavailable; historical model fallback active"}
     try:
-        return optimize_route(request, ship, icebergs, predictor, environment)
+        return optimize_route(request, ship, icebergs, predictor, environment, resolution=1.0)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 @app.get("/api/models/status", response_model=ModelStatus)
 def model_status():
-    return ModelStatus(iceberg_model=predictor.model_name if predictor.ml_available else "ML model unavailable - physics baseline active",sea_ice_model="Not configured" if not settings.demo_mode else "Persistence baseline active",route_optimizer="A* primary; Dijkstra fallback",data_sources={"ERA5":"NOT CONFIGURED","Copernicus Marine":"NOT CONFIGURED","Sentinel-1":"NOT CONFIGURED","Open-Meteo":"AVAILABLE","AIS":"Historical AIS Replay" if settings.demo_mode else "NOT CONFIGURED"})
+    copernicus_status = discover_datasets()
+    return ModelStatus(iceberg_model=predictor.model_name if predictor.ml_available else "ML model unavailable - physics baseline active",sea_ice_model="Persistence baseline" if settings.demo_mode else copernicus_status["status"],route_optimizer="A* primary; Dijkstra fallback",data_sources={"ERA5":"NOT CONFIGURED","Copernicus Marine":copernicus_status["status"],"Sentinel-1":"NOT CONFIGURED","Open-Meteo":"AVAILABLE","AIS":"Historical AIS Replay" if settings.demo_mode else "NOT CONFIGURED"})
 
 @app.get("/api/models/metrics")
 def model_metrics():

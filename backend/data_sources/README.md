@@ -1,1 +1,5 @@
-External adapters intentionally degrade gracefully. Credentials are loaded from environment or provider configuration only; repository credential files are never read. Before using Copernicus Marine dataset IDs, run the official Toolbox `describe` command and configure the selected IDs in the environment.
+External adapters intentionally degrade gracefully. Credentials are loaded from environment or provider configuration only; repository credential files are never read.
+
+Copernicus credentials alone do not select a dataset. The adapter prefers `COPERNICUS_MARINE_DATASET_CURRENT_6H`, then `COPERNICUS_MARINE_DATASET_CURRENT_DAILY`, or an explicit `COPERNICUS_MARINE_DATASET_ID`. For the current datasets shown in the project environment, configure `COPERNICUS_MARINE_VARIABLES=uo,vo`; `siconc` belongs to a separate sea-ice product and must not be requested from the physical-current dataset. The route environment sampler requests a small point subset and merges current components (`uo`, `vo`) with Open-Meteo weather data. If a dedicated sea-ice dataset is added later, it can be queried separately.
+
+For production, use the current official dataset ID for the region and variables you need; dataset IDs can change as Copernicus products are versioned.

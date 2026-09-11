@@ -9,6 +9,19 @@ class Settings(BaseSettings):
     demo_mode: bool = False
     open_meteo_base_url: str = "https://marine-api.open-meteo.com/v1/marine"
     open_meteo_weather_base_url: str = "https://api.open-meteo.com/v1/forecast"
+    copernicus_marine_dataset_id: str = ""
+    copernicus_marine_variables: str = "uo,vo"
+    copernicus_marine_username: str = ""
+    copernicus_marine_password: str = ""
+    copernicus_timeout_seconds: int = 60
+    copernicus_marine_product_id: str = ""
+    copernicus_marine_dataset_current_6h: str = ""
+    copernicus_marine_dataset_current_daily: str = ""
+    copernicus_marine_dataset_hourly: str = ""
+    copernicus_marine_dataset_daily: str = ""
+    copernicus_marine_dataset_merged_uv: str = ""
+    copernicus_cds_url: str = ""
+    copernicus_cds_key: str = ""
     datadocked_base_url: str = "https://datadocked.com/api/vessels_operations"
     datadocked_api_key: str = ""
     datadocked_vessel_ids: str = ""
@@ -34,6 +47,7 @@ class Settings(BaseSettings):
     grid_resolution_degrees: float = 1.0
     iceberg_forecast_horizon_hours: int = 48
     safety_buffer_km: float = 10.0
+    iceberg_clearance_km: float = 300.0
     vessel_speed_knots: float = 10.0
     fuel_weight: float = 1.0
     iceberg_risk_weight: float = 5.0

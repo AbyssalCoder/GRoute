@@ -33,6 +33,18 @@ class RouteMetrics(BaseModel):
     sea_ice_risk: float
     weather_risk: float
     explanation: str
+    reasons: list[str] = Field(default_factory=list)
+
+class RouteComparison(BaseModel):
+    mode: str
+    distance_km: float
+    travel_time_hours: float
+    fuel_estimate: float
+    fuel_saved_vs_shortest: float
+    fuel_savings_percent: float
+    kilometers_saved_vs_shortest: float
+    distance_reduction_percent: float
+    reasons: list[str] = Field(default_factory=list)
 
 class RouteResponse(BaseModel):
     mode: str
@@ -41,3 +53,5 @@ class RouteResponse(BaseModel):
     ship_route_segments: FeatureCollection
     iceberg_routes: FeatureCollection
     metrics: RouteMetrics
+    comparison_baseline: str = "shortest"
+    comparison: list[RouteComparison] = Field(default_factory=list)

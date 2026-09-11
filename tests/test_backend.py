@@ -5,6 +5,7 @@ from backend.models.iceberg.physics_model import destination
 from backend.models.iceberg.predictor import IcebergPredictor
 from backend.routing.risk import iceberg_risk
 from backend.services.routing_service import optimize_route
+from backend.routing.grid import CostGrid
 from backend.services.iceberg_motion import restore_and_advance
 from backend.schemas.iceberg import IcebergRecord
 from backend.services.demo import load_latest_icebergs
@@ -39,6 +40,18 @@ def test_route():
     assert response.ship_route_segments.features[0].properties['kind'] == 'ship'
     assert response.ship_route_segments.features[0].properties['arrival_hours'] > 0
     assert response.iceberg_routes.features == []
+
+def test_route_modes_produce_distinct_paths():
+    routes = []
+    for mode in ('balanced', 'safest', 'fuel', 'shortest'):
+        request = RouteRequest(vessel_id='123456789',start={'latitude':-62,'longitude':-50},destination={'latitude':-66,'longitude':-20},departure_time='2026-09-04T00:00:00Z',mode=mode)
+        response = optimize_route(request, TrackedShip(vessel_id='123456789',name='Aurora',latitude=-62,longitude=-50), [], None)
+        routes.append(tuple(tuple(point) for point in response.route.geometry.coordinates))
+    assert len(set(routes)) == 4
+
+def test_grid_uses_300_km_iceberg_clearance():
+    grid = CostGrid((-62, -50), (-66, -20), resolution=0.25, environment={'iceberg_points': [(-62, -50)], 'iceberg_clearance_km': 300})
+    assert grid.is_blocked(grid.nearest((-62, -50)))
 
 def test_physics_conversion():
     lat,lon=destination(-65,0,100,0)
@@ -85,7 +98,8 @@ def test_iceberg_motion_restores_and_advances_from_saved_state(tmp_path):
     assert second[0].latitude > first[0].latitude
     assert second[0].timestamp == now + timedelta(hours=1)
 
-def test_sos_alert_reports_missing_smtp_configuration():
+def test_sos_alert_reports_missing_smtp_configuration(monkeypatch):
+    monkeypatch.setattr('backend.main.settings.smtp_host', '')
     response = client.post('/api/alerts/sos', json={'vessel': {'name': 'Test Vessel', 'latitude': -60, 'longitude': -30}, 'nearby_icebergs': [], 'description': 'Test alert'})
     assert response.status_code == 200
     assert response.json()['status'] == 'not_configured'

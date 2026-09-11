@@ -24,7 +24,10 @@ def astar(grid: CostGrid, start: tuple[float,float], destination: tuple[float,fl
             if new_score < score.get(key, float('inf')):
                 score[key] = new_score
                 came_from[key] = (row,col)
-                # Risk and weather weights can make distance an inadmissible heuristic.
-                priority = new_score
+                # Use a conservative geographic lower bound to guide the search.
+                # Environmental and corridor penalties are non-negative, so this
+                # remains a lower bound for every route mode.
+                distance_lower_bound = haversine_km(current.latitude, current.longitude, destination[0], destination[1]) * 0.5
+                priority = new_score + distance_lower_bound
                 heapq.heappush(queue, (priority, *key))
     return []
